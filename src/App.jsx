@@ -7,7 +7,7 @@ const CC = {Analytical:"#38BDF8",Structured:"#A78BFA",Intuitive:"#FCD34D",Creati
 const AC = {"Co-founder Ready":"#22C55E",Exploring:"#F59E0B","Part-Time":"#64748B"};
 const RI = {Visionary:"◆",Executor:"▲",Analyst:"●",Generalist:"★"};
 const ACCESS = "deeptech";
-const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1H-XrvVG-k5dpETxh29-BCpMI1geTyA4SBFIUNwE785w/pub?output=csv";
+const SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQE3v4rwwVSlvsiv_p3gyvMbyCm9hq6VR2pYXb2n2LNI3DUMCnJSRwGGwpq6CL3PBUZTMii2YSb2_JK/pub?gid=1243146647&single=true&output=csv";
 const FORM_URL = "https://forms.gle/4fJKu397jhKGoeT4A";
 
 const P = [
@@ -65,10 +65,27 @@ const P = [
   {id:52,name:"Alla Bukuyazava",drives:["Autonomy","Impact"],cog:"Analytical",act:3,risk:3,learn:4,mission:"AI for good / ethical tech",vals:"Impact",role:"Visionary",dom:["Artificial Intelligence / Machine Learning","Business Strategy / Commercialization","Marketing"],skills:["Go-to-Market Planning","Team Leadership / Management","Project Management","Negotiation & Partnerships"],exp:true,avail:"Co-founder Ready",commit:"Part-time",contact:"alla.bukuyazava@gmail.com"},
 ];
 
-function csvLine(line) {
-  const f=[];let s='',q=false;
-  for(let i=0;i<line.length;i++){const c=line[i];if(c==='"'){if(q&&line[i+1]==='"'){s+='"';i++;}else q=!q;}else if(c===','&&!q){f.push(s.trim());s='';}else s+=c;}
-  f.push(s.trim());return f;
+function parseCSV(text) {
+  // Full-text CSV parser: handles quoted fields, escaped quotes and line breaks inside quotes.
+  const rows=[];let row=[],s='',q=false;
+  if(text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){s+='"';i++;} else q=false; }
+      else s+=c;
+    } else if(c==='"'){ q=true; }
+    else if(c===','){ row.push(s.trim());s=''; }
+    else if(c==='\n'||c==='\r'){
+      if(c==='\r'&&text[i+1]==='\n') i++;
+      row.push(s.trim());s='';
+      if(row.some(x=>x!=='')) rows.push(row);
+      row=[];
+    } else s+=c;
+  }
+  row.push(s.trim());
+  if(row.some(x=>x!=='')) rows.push(row);
+  return rows;
 }
 function rowToProfile(c,id){
   if(!c[1]||!c[3])return null;
@@ -76,10 +93,18 @@ function rowToProfile(c,id){
   return{id,name:c[1].trim(),drives:sp(c[2]).length?sp(c[2]):["Impact"],cog:c[3].trim()||"Analytical",act:parseInt(c[4])||3,risk:parseInt(c[5])||3,learn:parseInt(c[6])||3,mission:(c[7]||"").trim()||"Not specified",vals:(c[8]||"").trim()||"Quality",role:(c[9]||"").trim()||"Generalist",dom:sp(c[12]),skills:sp(c[13]),exp:(c[14]||"").toLowerCase().includes("yes"),avail:(c[16]||"").trim()||"Exploring",commit:(c[17]||"").trim()||"Part-time",contact:[c[18],c[19]].filter(Boolean).map(x=>x.trim()).join(" · ")||""};
 }
 async function fetchProfiles(){
-  const res=await fetch(SHEET_CSV);
+  const res=await fetch(SHEET_CSV,{cache:"no-store"});
+  if(!res.ok) throw new Error("Sheet returned HTTP "+res.status);
   const text=await res.text();
-  const lines=text.split('\n').filter(l=>l.trim());
-  return lines.slice(1).map((l,i)=>rowToProfile(csvLine(l),i+1)).filter(Boolean);
+  if(/^\s*</.test(text)) throw new Error("Sheet is not published as CSV");
+  const rows=parseCSV(text).slice(1);
+  // One profile per person: if someone submitted twice, the latest submission wins.
+  const byName=new Map();
+  rows.forEach((r,i)=>{
+    const p=rowToProfile(r,i+1);
+    if(p) byName.set(p.name.toLowerCase().replace(/\s+/g," "),p);
+  });
+  return [...byName.values()].map((p,i)=>({...p,id:i+1}));
 }
 
 const COG_M = {"Analytical-Creative":20,"Creative-Analytical":20,"Analytical-Intuitive":18,"Intuitive-Analytical":18,"Structured-Creative":18,"Creative-Structured":18,"Structured-Intuitive":15,"Intuitive-Structured":15,"Analytical-Structured":8,"Structured-Analytical":8,"Creative-Intuitive":10,"Intuitive-Creative":10};
@@ -204,7 +229,7 @@ function Card({p, onView, onMatch}) {
   );
 }
 
-function Browse({profiles, onView, onMatch, syncing, onSync}) {
+function Browse({profiles, onView, onMatch, syncing, onSync, status}) {
   const [q,setQ]=useState("");
   const [fR,setFR]=useState("");
   const [fA,setFA]=useState("");
@@ -233,6 +258,9 @@ function Browse({profiles, onView, onMatch, syncing, onSync}) {
         </div>
         <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:12,color:C.muted}}><b style={{color:C.text}}>{profiles.length}</b> profiles · <b style={{color:C.green}}>{ready}</b> ready</span>
+          <span title={status==="live"?"Loaded from the live Google Sheet":status==="failed"?"Could not reach the live sheet. Showing the built-in snapshot.":"Showing the built-in snapshot until the sheet loads"} style={{fontSize:10,padding:"3px 8px",borderRadius:20,fontWeight:700,letterSpacing:.5,background:status==="live"?`${C.green}18`:status==="failed"?`${C.red}18`:`${C.accent}18`,color:status==="live"?C.green:status==="failed"?C.red:C.accent,border:`1px solid ${status==="live"?C.green:status==="failed"?C.red:C.accent}40`}}>
+            {status==="live"?"● LIVE":status==="failed"?"● SNAPSHOT (sync failed)":"● SNAPSHOT"}
+          </span>
           <button onClick={onSync} disabled={syncing} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${C.bord}`,background:"transparent",color:syncing?C.accent:C.muted,fontSize:11,cursor:syncing?"default":"pointer",fontFamily:"'Figtree',sans-serif",transition:"color .2s"}}>
             {syncing?"⟳ Syncing…":"⟳ Sync"}
           </button>
@@ -408,16 +436,20 @@ export default function App() {
   const [profiles,setProfiles] = useState(P);
   const [syncing,setSyncing] = useState(false);
   const [fetched,setFetched] = useState(false);
+  const [status,setStatus] = useState("snapshot");
   const sync = useCallback(async()=>{
     setSyncing(true);
-    try{ const data=await fetchProfiles(); if(data.length>0) setProfiles(data); }catch(e){}
+    try{
+      const data=await fetchProfiles();
+      if(data.length>0){ setProfiles(data); setStatus("live"); } else setStatus("failed");
+    }catch(e){ setStatus("failed"); }
     setSyncing(false);
   },[]);
   useEffect(()=>{ if(view==="browse"&&!fetched){ setFetched(true); sync(); } },[view,fetched,sync]);
   const toView = useCallback(p=>{setSel(p);setView("detail");},[]);
   const toMatch = useCallback(p=>{setSeeker(p);setView("matches");},[]);
   if(view==="gate") return <Gate onEnter={()=>setView("browse")}/>;
-  if(view==="browse") return <Browse profiles={profiles} onView={toView} onMatch={toMatch} syncing={syncing} onSync={sync}/>;
+  if(view==="browse") return <Browse profiles={profiles} onView={toView} onMatch={toMatch} syncing={syncing} onSync={sync} status={status}/>;
   if(view==="detail") return <Detail p={sel} onBack={()=>setView("browse")} onMatch={toMatch}/>;
   if(view==="matches") return <Matches seeker={seeker} profiles={profiles} onBack={()=>setView("browse")} onView={toView}/>;
 }
